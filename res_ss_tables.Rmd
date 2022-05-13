@@ -1,0 +1,441 @@
+---
+title: "res_ss_tables"
+author: "Josh Alampi"
+date: "18/01/2022"
+output: html_document
+---
+
+#load
+```{r}
+#clear workspace
+rm(list=ls(all=TRUE))
+
+#load packages
+library(readr); library(writexl) # for read_csv(); write_xlsx()
+library(plyr) # mapvalues()
+library(MASS)
+library(dplyr)
+library(tidyr) # for gather()
+library(ggplot2)
+library(ggrepel); library(ggpubr); library(scales) # extra ggplot features
+library(signs) # for signs_format(), uses proper minus sign instead of hyphen
+library(lmtest) # for bptest()
+library(quantreg)
+library(bayesQR)
+select <- dplyr::select
+library(rstan)
+library(tidyverse)
+source("functions/ggplot functions.R")
+source("functions/general_functions.R")
+```
+
+```{r}
+data_dith <- read.csv("sim study/raw results/table_ss_JA model_2021-08-07_1000_sims.csv")
+data_cnts <- read.csv("sim study/raw results/table_ss_JA moel_gold_2021-10-28_1000_sims.csv")
+
+nrow(data_dith)
+nrow(data_cnts)
+```
+
+# clean
+
+## Count data
+```{r}
+data_dith <- data_dith %>% 
+  filter(method != "bayes_adj_v1") # do not need adj_v1 (the default SW adjustment), as I have demonstrated earlier that it is defective. 
+
+data_dith$method <- data_dith$method %>% # shorten the Bayesian methods' names
+  mapvalues("bayes_adj_v2", "bnid") %>% 
+  mapvalues("bayes", "biid") 
+
+data_dith <- data_dith %>% # new variable: status tells us the type of data
+  mutate(status = ifelse(method %in% c("bnid", "biid"),
+                         "Bayesian", # Bayesian methods were not dithered
+                         "Freq. (count)")) # Frequentist methods were dithered
+
+```
+
+## Continuous data (Bayesian methods not used)
+```{r}
+data_cnts <- data_cnts %>% 
+  filter(is.na(method) == F) %>% # gets rid of blank method rows
+  mutate(status = "Freq. (cnts)")
+
+```
+
+## combine
+```{r}
+data <- rbind(data_dith, data_cnts); nrow(data)
+rm(data_dith, data_cnts)
+```
+
+
+# prep for analysis
+## basic cleanup
+```{r}
+data$model <- data$model %>% # give the models proper names
+  mapvalues(1, "Model 1") %>% 
+  mapvalues(2, "Model 2") %>% 
+  mapvalues(3, "Model 3") %>% 
+  mapvalues(4, "Model 4") 
+
+data$beta <- as.numeric(data$beta)
+data$lb <- as.numeric(data$lb)
+data$ub <- as.numeric(data$ub)
+data$tau <- as.factor(data$tau)
+```
+
+## find interval width, remove infinite intervals
+```{r}
+# find interval width, with infinite intervals set to NA
+data <- data %>% 
+  mutate(int_width = ub - lb)
+
+# Flag and delete infinite intervals
+# Flag and delete simulations with no effect estimate
+data <- data %>% 
+  mutate(infin_flag = ifelse(is.infinite(lb) == T | is.infinite(ub) == T
+                             # | lb > abs(10000) | ub > abs(10000)
+                             ,
+                             T, # interval is infinite or so large it should be removed
+                             F) ) %>%
+  mutate(na_flag = ifelse(is.na(beta) == T,
+                          T, # no effect estimate is given due to failure to converge
+                          F)) %>% 
+  mutate(lb = ifelse(infin_flag == T | na_flag == T, NA, lb)) %>%
+  mutate(ub = ifelse(infin_flag == T | na_flag == T, NA, ub)) %>%
+  mutate(int_width = ifelse(infin_flag == T | na_flag == T, NA, int_width))
+
+```
+
+## find average beta and average CI width across each group of variable
+```{r}
+# Find the mean \hat(beta_i) across repetitions 
+# Morris et al 2017 calls this value "beta-vinculum", the beta symboll with a flat line on top
+data_summarised_1 <- data %>% 
+  group_by(method, tau, model, n, status) %>% 
+  summarise(mean_beta = mean(beta, na.rm = T)) 
+
+# Repeat this process with mean(\hat(interval width))
+data_summarised_2 <- data %>% 
+  group_by(method, tau, model, n, status) %>% 
+  summarise(mean_intwidth = mean(int_width, na.rm = T))
+
+
+# Add this value to the dataframe
+data <- merge(data, data_summarised_1, by=c("method", "tau", "model", "n", "status"))
+data <- merge(data, data_summarised_2, by=c("method", "tau", "model", "n", "status"))
+rm(data_summarised_1, data_summarised_2)
+```
+
+## Calculate performance measures 
+```{r}
+data1 <- data %>%
+  mutate(n = paste0(("n = "), n)) %>% 
+  
+  # Performance measures
+  mutate(hit_flag = ifelse(lb <= true_beta & ub >= true_beta,
+                           T, #90% interval contains true_beta
+                           F)) %>%
+  
+  mutate(hit_flag_be = ifelse(lb <= mean_beta & ub >= mean_beta,
+                              T, #90% interval contains true_beta
+                              F)) %>%
+  
+  mutate(bias = beta - true_beta) %>% 
+  mutate(bias_rel = beta - mean_beta) %>%
+  mutate(intwidth_rel = int_width - mean_intwidth) %>% 
+  
+  # Cleaning
+  mutate(degen_flag = ifelse(beta == lb | beta == ub, # flag rows where beta = lb or ub
+                             T, # interval is degenerate
+                             F) ) %>%
+  # New labels for methods
+  mutate(group = ifelse(method %in% c("biid", "bnid"), 
+                      "Bayesian",
+                      ifelse(method %in% c("iid", "ker", "nid"), 
+                             "Direct Estimation",
+                             ifelse(method %in% c("riid", "rnid"),
+                                    "Rank-Based",
+                                    "Bootstrap"))))
+
+
+# force methods to be read in a particular order
+data1$method <- factor(data1$method, levels = c("iid", "nid", "ker", "riid", "rnid", 
+                                            "xy", "wxy", "pwy", "mcmb", "wild", "pbs", 
+                                            "biid", "bnid"))
+```
+
+Testing
+```{r}
+# OLD: used for testing intwidth_var
+data_variability <- data %>% 
+  mutate(n = paste0(("n = "), n)) %>% 
+  mutate(intwidth_rel = int_width - mean_intwidth) %>% 
+  filter(is.na(intwidth_rel) == F) %>% 
+  mutate(infin_flag = ifelse(is.infinite(lb) == T | is.infinite(ub) == T, # flag rows w infinite intervals
+                             T, # interval is degenerate
+                             F) )
+
+
+
+data_mcmb_notconverged <- data1 %>% 
+  filter(method == "mcmb") %>% 
+  # filter(is.na(beta) == T) %>% 
+  filter(model == "Model 3")
+```
+
+```{r}
+rm(data_mcmb_notconverged)
+```
+
+## filter "data"
+```{r}
+# dataset for bias and empSE
+## all 11 frequentist methods give the same beta estimate.
+## both Bayesian methods give the same beta estimate
+data_short <- data1 %>% 
+  filter(method %in% c("riid", "biid")) %>% 
+  mutate(group_reformat = ifelse(group != "Bayesian", # Change the lables for the "group" variable
+                           "Frequentist",
+                           "Bayesian")) 
+
+
+# datasets for empirical coverage prob and CI width_var
+
+data_count <- data1 %>% ## Uses all 13 methods, Only count data is simulated
+  filter(status != "Freq. (cnts)")
+
+data_cnts <- data1 %>% ## Uses all 11 Frequentist methods (Bayesian methods ommitted), only countinuous data is simulated
+  filter(status == "Freq. (cnts)")
+
+data_count_vs_cnts <- data1 %>% # For comparing dith. FQR on count data vs undithered FQR on continuous data
+  filter(status != "Bayesian")
+
+```
+
+# make tables
+Note: adjusted p-values are adjusted for 60 comparisons
+
+## bias
+```{r}
+sims <- 1000 
+round <- 2
+round_se <- 3
+round_p <- 20
+
+bias_freq_vs_bayes <- data_short %>% 
+  filter(status != "Freq. (cnts)") %>%
+  select(c(n, model, tau, group_reformat, bias, bias_rel)) %>% 
+  group_by(n, model, tau, group_reformat) %>% 
+  summarise(bias = round( sum(bias) / sims, round),
+            bias_se = round(
+              sqrt( sum((bias_rel)^2) / (sims * (sims -1)) ), round_se) 
+            ) %>% 
+  pivot_wider(names_from = group_reformat, values_from = c(bias, bias_se))
+
+
+bias_freq_vs_bayes_p <- data_short %>%
+  filter(status != "Freq. (cnts)") %>%
+  select(c(n, model, tau, group_reformat, bias)) %>%
+  group_by(n, model, tau) %>%
+  summarise(p = round(
+    t.test(bias[group_reformat == "Frequentist"],
+                       bias[group_reformat == "Bayesian"])$p.value, round_p)
+  ) %>%
+  mutate(p_adj = p.adjust(p, n = 60, method = "bonferroni"))
+
+
+bias_freq_vs_bayes_cor <- data_short %>%
+  filter(status != "Freq. (cnts)") %>%
+  select(c(n, model, tau, group_reformat, bias)) %>%
+  group_by(n, model, tau) %>%
+  summarise(cor = cor(bias[group_reformat == "Frequentist"],
+                       bias[group_reformat == "Bayesian"])) # proves no correlation: a 2-sample t-test is appropriate
+
+bias_freq_vs_bayes <- as.data.frame(bias_freq_vs_bayes)
+
+p <- bias_freq_vs_bayes_p [,c(4,5)]
+p <- as.data.frame(p)
+colnames(p)[1] <- "p"; colnames(p)[2] <- "p_adj"
+
+bias_freq_vs_bayes_final <- cbind(bias_freq_vs_bayes, p)
+
+bias_freq_vs_bayes_final <- bias_freq_vs_bayes_final %>% 
+  mutate(p_v2 = pvalue_rounder_v2(p)) %>% 
+  mutate(p_adj_v2 = pvalue_rounder_v2(p_adj)) 
+
+
+rm(bias_freq_vs_bayes, bias_freq_vs_bayes_p, p)
+
+write_xlsx(bias_freq_vs_bayes_final, 
+           path = paste0("sim study/results/tables/bias_freqvsbayes_1000_sims", "_",  Sys.Date(), ".xlsx", sep = ""))
+```
+
+```{r}
+sims <- 1000 
+round <- 2
+round_se <- 3
+round_p <- 20
+
+bias_count_vs_cnts <- data_short %>% 
+  filter(status != "Bayesian") %>%
+  select(c(n, model, tau, status, bias, bias_rel)) %>% 
+  group_by(n, model, tau, status) %>% 
+  summarise(bias = round( sum(bias) / sims, round),
+            bias_se = round(
+              sqrt( sum((bias_rel)^2) / (sims * (sims -1)) ), round_se) 
+            ) %>% 
+  pivot_wider(names_from = status, values_from = c(bias, bias_se))
+
+
+bias_count_vs_cnts_p <- data_short %>% 
+  filter(group != "Bayesian") %>%
+  select(c(n, model, tau, status, bias)) %>% 
+  group_by(n, model, tau) %>% 
+  summarise(p = round(
+    t.test(bias[status == "Freq. (count)"], 
+                       bias[status == "Freq. (cnts)"])$p.value, round_p)
+  ) %>% 
+  mutate(p_adj = p.adjust(p, n = 60, method = "bonferroni"))
+
+bias_count_vs_cnts_cor <- data_short %>% 
+  filter(group != "Bayesian") %>%
+  select(c(n, model, tau, status, bias)) %>% 
+  group_by(n, model, tau) %>% 
+  summarise(cor = cor(bias[status == "Freq. (count)"], 
+                       bias[status == "Freq. (cnts)"])) # proves no correlation: a 2-sample t-test is appropriate
+
+bias_count_vs_cnts <- as.data.frame(bias_count_vs_cnts)
+
+p <- bias_count_vs_cnts_p [,c(4,5)]
+p <- as.data.frame(p)
+colnames(p)[1] <- "p"; colnames(p)[2] <- "p_adj"
+
+bias_count_vs_cnts_final <- cbind(bias_count_vs_cnts, p)
+
+bias_count_vs_cnts_final <- bias_count_vs_cnts_final %>% 
+  mutate(p_v2 = pvalue_rounder_v2(p)) %>% 
+  mutate(p_adj_v2 = pvalue_rounder_v2(p_adj)) 
+
+rm(p, bias_count_vs_cnts, bias_count_vs_cnts_p)
+
+write_xlsx(bias_count_vs_cnts_final, 
+           path = paste0("sim study/results/tables/bias_countvscnts_1000_sims", "_",  Sys.Date(), ".xlsx", sep = ""))
+```
+
+## empSE
+
+```{r}
+sims <- 1000 
+round <- 2
+round_se <- 3
+round_p <- 20
+
+empSE_freq_vs_bayes <- data_short %>% 
+  filter(status != "Freq. (cnts)") %>%
+  select(c(n, model, tau, group_reformat, bias, bias_rel)) %>% 
+  group_by(n, model, tau, group_reformat) %>% 
+  summarise(empSE = round(sqrt( sum((bias_rel)^2) / (sims - 1) ), round),
+            empSE_se = round(
+              empSE / sqrt( 2  * (sims - 1) ), round_se) 
+  ) %>% 
+  pivot_wider(names_from = group_reformat, values_from = c(empSE, empSE_se))
+
+empSE_freq_vs_bayes_p <- data_short %>% 
+  filter(status != "Freq. (cnts)") %>%
+  select(c(n, model, tau, group_reformat, beta)) %>% 
+  group_by(n, model, tau) %>% 
+  summarise(p = round(
+    var.test(beta[group_reformat == "Frequentist"], 
+           beta[group_reformat == "Bayesian"])$p.value, round_p)
+  ) %>% 
+  mutate(p_adj = p.adjust(p, n = 60, method = "bonferroni"))
+
+empSE_freq_vs_bayes_cor <- data_short %>% 
+  filter(status != "Freq. (cnts)") %>%
+  select(c(n, model, tau, group_reformat, beta)) %>% 
+  group_by(n, model, tau) %>% 
+  summarise(cor = cor(beta[group_reformat == "Frequentist"], 
+           beta[group_reformat == "Bayesian"])) # proves no correlation
+
+empSE_freq_vs_bayes <- as.data.frame(empSE_freq_vs_bayes)
+
+p <- empSE_freq_vs_bayes_p[,c(4,5)]
+p <- as.data.frame(p)
+colnames(p)[1] <- "p"; colnames(p)[2] <- "p_adj"
+
+empSE_freq_vs_bayes_final <- cbind(empSE_freq_vs_bayes, p)
+
+empSE_freq_vs_bayes_final <- empSE_freq_vs_bayes_final %>% 
+  mutate(p_v2 = pvalue_rounder_v2(p)) %>% 
+  mutate(p_adj_v2 = pvalue_rounder_v2(p_adj)) 
+  
+  
+  # mutate(signif_flag = ifelse(p < 0.05,
+  #                             T, F))%>%
+  # mutate(dif = .[4] - .[5])
+
+rm(empSE_freq_vs_bayes, empSE_freq_vs_bayes_p, p)
+
+write_xlsx(empSE_freq_vs_bayes_final, 
+           path = paste0("sim study/results/tables/empSE_freqvsbayes_1000_sims", "_",  Sys.Date(), ".xlsx", sep = ""))
+```
+
+```{r}
+sims <- 1000 
+round <- 2
+round_se <- 3
+round_p <- 20
+
+empSE_count_vs_cnts <- data_short %>% 
+  filter(status != "Bayesian") %>%
+  select(c(n, model, tau, status, bias, bias_rel)) %>% 
+  group_by(n, model, tau, status) %>% 
+  summarise(empSE = round( sqrt( sum((bias_rel)^2) / (sims - 1) ), round),
+            empSE_se = round(
+              empSE / sqrt( 2  * (sims - 1) ), round_se) 
+  ) %>% 
+  pivot_wider(names_from = status, values_from = c(empSE, empSE_se))
+
+empSE_count_vs_cnts_p <- data_short %>% 
+  filter(group != "Bayesian") %>%
+  select(c(n, model, tau, status, beta)) %>% 
+  group_by(n, model, tau) %>% 
+  summarise(p = round(
+    var.test(beta[status == "Freq. (count)"], 
+                       beta[status == "Freq. (cnts)"])$p.value, round_p)
+  ) %>% 
+  mutate(p_adj = p.adjust(p, n = 60, method = "bonferroni"))
+
+empSE_count_vs_cnts_cor <- data_short %>% 
+  filter(group != "Bayesian") %>%
+  select(c(n, model, tau, status, beta)) %>% 
+  group_by(n, model, tau) %>%
+  summarise(cor = cor(beta[status == "Freq. (count)"], 
+                       beta[status == "Freq. (cnts)"])) # proves no correlation
+
+empSE_count_vs_cnts <- as.data.frame(empSE_count_vs_cnts)
+
+p <- empSE_count_vs_cnts_p[,c(4,5)]
+p <- as.data.frame(p)
+colnames(p)[1] <- "p"; colnames(p)[2] <- "p_adj"
+
+empSE_count_vs_cnts_final <- cbind(empSE_count_vs_cnts, p)
+
+empSE_count_vs_cnts_final <- empSE_count_vs_cnts_final %>% 
+  mutate(p_v2 = pvalue_rounder_v2(p)) %>% 
+  mutate(p_adj_v2 = pvalue_rounder_v2(p_adj)) 
+
+rm(empSE_count_vs_cnts, empSE_count_vs_cnts_p, p)
+
+write_xlsx(empSE_count_vs_cnts_final, 
+           path = paste0("sim study/results/tables/empSE_countvscnts_1000_sims", "_",  Sys.Date(), ".xlsx", sep = ""))
+```
+
+
+
+
+
+
+

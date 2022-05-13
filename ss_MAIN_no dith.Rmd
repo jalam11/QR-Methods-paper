@@ -1,0 +1,375 @@
+---
+title: "ss_MAIN_no dith"
+author: "Josh Alampi"
+date: "7/19/2021"
+output: html_document
+---
+
+
+# load
+```{r}
+#clear workspace
+rm(list=ls(all=TRUE))
+
+#load packages
+library(readr); library(writexl) # for read_csv(); write_xlsx()
+library(plyr) # mapvalues()
+library(MASS)
+library(dplyr)
+library(tidyr) # for gather()
+library(ggplot2)
+library(ggrepel); library(ggpubr); library(scales) # extra ggplot features
+library(signs) # for signs_format(), uses proper minus sign instead of hyphen
+library(lmtest) # for bptest()
+library(quantreg)
+library(bayesQR)
+select <- dplyr::select
+library(rstan)
+source("functions/summary_sanwich.R")
+
+library(emg)
+```
+
+# parameters
+```{r}
+# simulation
+nsims <- 1000
+m <- 13 # number of methods used. Allows for less coded needing to be written every time I change the # of methods
+
+z <- qnorm(0.95); z_lower <- 0.05; z_upper <- 0.95; level = 0.9 # For creating 90% Confidence intervals. 
+
+# paras <- list( c(1, 100), c(1, 250), c(1, 500), # Model 1: IID, normal x and errors
+#                c(2, 100), c(2, 250), c(2, 500), # Model 2: NID, normal x and errors
+#                c(3, 100), c(3, 250), c(3, 500), # Model 3: NID, log-normal x, normal errors
+#                c(4, 100), c(4, 250), c(4, 500)) # Model 4: NID, normal x, emg errors
+
+paras <- list( c(1, 100), c(1, 250), c(1, 500), # Model 1: IID, normal x and errors
+               c(2, 100), c(2, 250), c(2, 500),# Model 2: NID, normal x and errors
+               c(3, 100), c(3, 250), c(3, 500),# Model 3: NID, log-normal x, normal errors
+               c(4, 100), c(4, 250), c(4, 500)) # Model 4: NID, normal x, emg errors
+
+taus <- c(0.1, 0.3, 0.5, 0.7, 0.9)
+
+
+# covariate parameters 
+mu_x <- 0
+sigma_x <- 1
+gamma <- 0.1
+prob_x2 <- 0.2
+
+# y parameters
+beta0 <- 44
+beta1 <- 0.5
+beta2 <- 2.5
+mu_u <- 0
+sigma_u <- 1
+lambda_u <- 0.4 # controls skewness (model 4 only)
+alpha_y <- 5
+# alpha_x1 <- 0.5 # will be selected in the loop. Controls heteroscedasticity. 
+
+# misc parameters
+boot <- 1000 # 1000 bootstraps
+ndraw <- 10000
+burnin <- 2000
+# ndraw <- 500
+# burnin <- 1
+```
+
+# make table
+```{r}
+table <- setNames(data.frame(matrix(data = NA, nrow = m*length(taus)*length(paras)*nsims, 
+                                    ncol = 8)), 
+                  c("method", "beta", "lb", "ub", "true_beta", "tau", "model", "n")) #set column names
+```
+
+# SS
+```{r include=FALSE}
+set.seed(1010)
+
+# table <- read.csv("sim study/raw results/table_ss_no dith_2021-08-04_520_run_1000_sims.csv")
+
+for(i in 1:nsims){
+  print(paste0(i, " simulations out of ", nsims))
+  
+  for(j in 1:length(paras)){
+    this_para <- paras[[j]]
+
+    model <- this_para[1]
+    n <- this_para[2]
+    
+    if(model == 1){
+      alpha_x1 <- 0
+    } else {
+      alpha_x1 <- 0.5
+    }
+    
+    # Step 1: Create data ----
+    x2 <- rbinom(n, 1, prob_x2)
+    
+    if(model == 3){
+      x1 <- rlnorm(n, mu_x + gamma*x2, sigma_x)
+    } else {
+      x1 <- rnorm(n, mu_x + gamma*x2, sigma_x)
+    }
+    
+    if(model == 4){
+      e <- remg(n, mu_u, sigma_u, lambda_u)
+    } else {
+      e <- rnorm(n, mu_u, sigma_u)
+    }
+    
+    y <- round(beta0 + beta1*x1 + beta2*x2 + e*(alpha_y + alpha_x1*x1), 0)
+    
+    for(k in 1:length(taus)){
+      tau <- taus[k]
+      
+      if (model == 4){
+        true_beta <- beta1 + qemg(tau, mu_u, sigma_u, lambda_u)*(alpha_x1) 
+      } else {
+        true_beta <- beta1 + qnorm(tau, mu_u, sigma_u)*(alpha_x1) 
+      } # true effect of x1 for a given tau
+      
+      
+      # Step 2: Make models ----
+      # rq_model <- rq(y~x1 + x2, tau = tau)
+      rq_model <- rq(y~x1 + x2, tau = tau)
+      # boot_dist <- (boot.rq(cbind(1, x1, x2), y, tau = tau, R = boot))$B[,2]
+      
+      # sink(file="bayesQR.txt")
+      # bqr_model <- bayesQR(y~x1 + x2, quantile = tau, ndraw = ndraw)
+      # sink()
+      # 
+      # X <- as.matrix(cbind(1, x1, x2))
+      # 
+      # if (mean(bqr_model[[1]]$beta[,2]) == "NaN" ) { 
+      #   bqr_model <- bayesQR(y ~ x1 + x2, quantile = tau, ndraw = ndraw) 
+      #   
+      #   if (mean(bqr_model[[1]]$beta[,2]) == "NaN" ) { #if that fails, try again
+      #     bqr_model <- bayesQR(y ~ x1 + x2, quantile = tau, ndraw = ndraw) 
+      #     
+      #     if (mean(bqr_model[[1]]$beta[,2]) == "NaN" ) { #if that fails, try again
+      #       bqr_model <- bayesQR(y ~ x1 + x2, quantile = tau, ndraw = ndraw)
+      #       
+      #       if (mean(bqr_model[[1]]$beta[,2]) == "NaN" ) {
+      #         bqr_model <- bayesQR(y ~ x1 + x2, quantile = tau, ndraw = ndraw)  
+      #         
+      #         if (mean(bqr_model[[1]]$beta[,2]) == "NaN" ) {
+      #           bqr_model <- bayesQR(y ~ x1 + x2, quantile = tau, ndraw = ndraw)  
+      #           
+      #           if (mean(bqr_model[[1]]$beta[,2]) == "NaN" ) {
+      #             bqr_model <- bayesQR(y ~ x1 + x2, quantile = tau, ndraw = ndraw)  
+      #           }
+      #         }
+      #       }    
+      #     }
+      #   }
+      # }
+      
+      # Step 3: Extract values ----
+      
+      ## iid
+      iid_beta <- summary(rq_model, se = "iid")[[3]][2,1]
+      iid_se <- summary(rq_model, se="iid")[[3]][2,2]
+      
+      ## nid
+      # nid_beta <- summary(rq_model, se = "nid")[[3]][2,1]
+      # nid_se <- summary(rq_model, se="nid")[[3]][2,2]
+      
+      ## ker
+      # ker_beta <- summary(rq_model, se = "ker")[[3]][2,1]
+      # ker_se <- summary(rq_model, se="ker")[[3]][2,2]
+      
+      ## rank, iid
+      riid <- summary(rq_model, se = "rank", iid = T, alpha = z_lower*2)[[3]][2,]
+      riid_beta <- riid[1]; riid_lb <- riid[2]; riid_ub <- riid[3]
+
+      ## rank, nid
+      rnid <- summary(rq_model, se = "rank", iid = F, alpha = z_lower*2)[[3]][2,]
+      rnid_beta <- rnid[1]; rnid_lb <- rnid[2]; rnid_ub <- rnid[3]
+
+      ## boot, xy
+      # xy_coef <- summary(rq_model, se = "boot", bsmethod ="xy", R = boot)[[3]][2,1:2]
+      # xy_beta <- xy_coef[1]; xy_se <- xy_coef[2]
+      
+      ## boot, pwy
+      # pwy_coef <- summary(rq_model, se = "boot", bsmethod ="pwy", R = boot)[[3]][2,1:2]
+      # pwy_beta <- pwy_coef[1]; pwy_se <- pwy_coef[2]
+      
+      ## boot, mcmb
+      # skip_to_next <- F
+      # tryCatch( mcmb_coef <- summary(rq_model, se = "boot", 
+      #                                bsmethod ="mcmb", R = boot)[[3]][2,1:2]
+      #           , error = function(e) { skip_to_next <<- T} )
+      # if(skip_to_next == T) {next} # Prevents loop from stopping when this code fails. 
+      # 
+      # mcmb_beta <- mcmb_coef[1]; mcmb_se <- mcmb_coef[2]
+      
+      ## boot, wxy
+      # wxy_coef <- summary(rq_model, se = "boot", bsmethod ="wxy", R = boot)[[3]][2,1:2]
+      # wxy_beta <- wxy_coef[1]; wxy_se <- wxy_coef[2]
+      
+      ## boot, wild
+      # wild_coef <- summary(rq_model, se = "boot", bsmethod ="wild", R = boot)[[3]][2,1:2]
+      # wild_beta <- wild_coef[1]; wild_se <- wild_coef[2]
+      
+      ## boot, pbs
+      # pbs_beta <- mean(boot_dist)
+      # pbs_lb <- quantile(boot_dist, z_lower)
+      # pbs_ub <- quantile(boot_dist, z_upper)
+      
+      # ## Bayesian, unadjusted
+      # bayes_coef <- summary(bqr_model, burnin = burnin, credint = c(z_lower, z_upper))[[1]]$betadraw[2,]
+      # bayes_beta <- bayes_coef[1]; bayes_lb <- bayes_coef[2]; bayes_ub <- bayes_coef[3]
+      # 
+      # ## Bayesian, adjusted
+      # bayes_adj_sw <- summary_sw(bqr_model, n = n, burnin = burnin, covariates= X, level =level)
+      # bayes_adj_beta <- bayes_adj_sw[1]
+      # bayes_adj_lb <- bayes_adj_sw[2]; bayes_adj_ub <- bayes_adj_sw[3]
+      
+      
+      # Step 4: Store values ----
+      skip <- (k-1)*m + (j-1)*m*length(taus) + (i-1)*m*length(taus)*length(paras)
+      lower_range <- skip + 1
+      upper_range <- skip + m
+      
+      ## names
+      table[skip +1,1] <- "iid"; table[skip +2,1] <- "nid"; 
+      table[skip +3,1] <- "ker"; table[skip +4,1] <- "riid"; 
+      table[skip +5,1] <- "rnid"; table[skip +6,1] <- "xy"; 
+      table[skip +7,1] <- "pwy"; table[skip +8,1] <- "mcmb"; 
+      table[skip +9,1] <- "wxy"; table[skip +10,1] <- "wild"; 
+      table[skip +11,1] <- "pbs"
+      table[skip +12,1] <- "bayes"; table[skip +13,1] <- "bayes_adj" 
+      
+      ## beta
+      table[skip +1,2] <- iid_beta
+      # table[skip +2,2] <- nid_beta
+      # table[skip +3,2] <- ker_beta
+      table[skip +4,2] <- riid_beta
+      table[skip +5,2] <- rnid_beta
+      # table[skip +6,2] <- xy_beta
+      # table[skip +7,2] <- pwy_beta
+      # table[skip +8,2] <- mcmb_beta
+      # table[skip +9,2] <- wxy_beta
+      # table[skip +10,2] <- wild_beta
+      # table[skip +11,2] <- pbs_beta
+      # table[skip +12,2] <- bayes_beta
+      # table[skip +13,2] <- bayes_adj_beta
+      
+      ## lb
+      table[skip +1,3] <- iid_beta - z*iid_se
+      # table[skip +2,3] <- nid_beta - z*nid_se
+      # table[skip +3,3] <- ker_beta- z*ker_se
+      table[skip +4,3] <- riid_lb
+      table[skip +5,3] <- rnid_lb
+      # table[skip +6,3] <- xy_beta - z*xy_se
+      # table[skip +7,3] <- pwy_beta - z*pwy_se
+      # table[skip +8,3] <- mcmb_beta - z*mcmb_se
+      # table[skip +9,3] <- wxy_beta- z*wxy_se
+      # table[skip +10,3] <- wild_beta - z*wild_se
+      # table[skip +11,3] <- pbs_lb
+      # table[skip +12,3] <- bayes_lb
+      # table[skip +13,3] <- bayes_adj_lb
+      
+      ## ub
+      table[skip +1,4] <- iid_beta + z*iid_se
+      # table[skip +2,4] <- nid_beta + z*nid_se
+      # table[skip +3,4] <- ker_beta+ z*ker_se
+      table[skip +4,4] <- riid_ub
+      table[skip +5,4] <- rnid_ub
+      # table[skip +6,4] <- xy_beta + z*xy_se
+      # table[skip +7,4] <- pwy_beta + z*pwy_se
+      # table[skip +8,4] <- mcmb_beta + z*mcmb_se
+      # table[skip +9,4] <- wxy_beta+ z*wxy_se
+      # table[skip +10,4] <- wild_beta + z*wild_se
+      # table[skip +11,4] <- pbs_ub
+      # table[skip +12,4] <- bayes_ub
+      # table[skip +13,4] <- bayes_adj_ub
+      
+      ## The rest
+      table[lower_range:upper_range,5] <- true_beta; table[lower_range:upper_range,6] <- tau; 
+      table[lower_range:upper_range,7] <- model; table[lower_range:upper_range,8] <- n
+      
+      rm(iid_beta, iid_se,
+         riid_beta, riid_lb, riid_ub, rnid_beta, rnid_lb, rnid_ub
+         )
+    }
+  }
+}
+
+
+#save as a csv file
+write.csv(table, row.names = F, file = paste0("sim study/raw results/table_ss_no dith_v2", "_",  Sys.Date(), "_", nsims, "_sims.csv", sep = ""))
+```
+
+
+
+# record of parameters
+## Aug 04 2021 v1
+z <- qnorm(0.95); z_lower <- 0.05; z_upper <- 0.95; level = 0.9 # For creating 90% Confidence intervals. 
+
+paras <- list( c(1, 100), c(1, 250), # Model 1: IID, normal x and errors
+               c(2, 100), c(2, 250),# Model 2: NID, normal x and errors
+               c(4, 100), c(4, 250)) # Model 4: NID, normal x, emg errors
+taus <- c(0.1, 0.3, 0.5, 0.7, 0.9)
+
+mu_x <- 0
+sigma_x <- 1
+gamma <- 0.1
+prob_x2 <- 0.2
+beta0 <- 44
+beta1 <- 0.5
+beta2 <- 2.5
+mu_u <- 0
+sigma_u <- 1
+lambda_u <- 0.4 # controls skewness (model 4 only)
+alpha_y <- 5
+boot <- 1000 # 1000 bootstraps
+ndraw <- 10000
+burnin <- 2000
+
+
+
+
+
+## Aug 04 2021 v2
+z <- qnorm(0.95); z_lower <- 0.05; z_upper <- 0.95; level = 0.9 # For creating 90% Confidence intervals. 
+paras <- list( c(1, 100), c(1, 250), c(1, 500), # Model 1: IID, normal x and errors
+               c(2, 100), c(2, 250), c(2, 500),# Model 2: NID, normal x and errors
+               c(3, 100), c(3, 250), c(3, 500),# Model 3: NID, log-normal x, normal errors
+               c(4, 100), c(4, 250), c(4, 500)) # Model 4: NID, normal x, emg errors
+taus <- c(0.1, 0.3, 0.5, 0.7, 0.9)
+mu_x <- 0
+sigma_x <- 1
+gamma <- 0.1
+prob_x2 <- 0.2
+
+beta0 <- 44
+beta1 <- 0.5
+beta2 <- 2.5
+mu_u <- 0
+sigma_u <- 1
+lambda_u <- 0.4 # controls skewness (model 4 only)
+alpha_y <- 5
+boot <- 1000 # 1000 bootstraps
+ndraw <- 10000
+burnin <- 2000
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
