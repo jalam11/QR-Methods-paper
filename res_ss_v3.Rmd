@@ -365,8 +365,13 @@ fig_cov_250 <- gg_geom_point(.data = data_tmp, x =tau, y = cov, ymin = cov - cov
   
 # ggsave(file = paste0("sim study/results/fig_cov_250", "_",  Sys.Date(), ".png"), width = 7.5, height = 9.5, dpi = 300)
 
-# save file in format EHP wants
-ggsave(file = paste0("sim study/results/figure 2.tiff"), width = 7.5, height = 9.5, dpi = 600)
+# save file in format SIS wants
+fig_cov_250 <- annotate_figure(fig_cov_250, 
+                          top = text_grob("Joshua Alampi, Figure 2. This is the top of the figure",
+                                             size = 9))
+
+
+ggsave(file = paste0("sim study/results/figure 2.tiff"), width = 7.5, height = 9.5, dpi = 800)
 ```
 
 
@@ -625,7 +630,11 @@ fig_intwidthvar_250 <- gg_geom_point(.data = data_tmp, x = method,
 
 # ggsave(file = paste0("sim study/results/fig_intwidthvar_250_main", "_",  Sys.Date(), ".png"), width = 7.5, height = 3.5, dpi = 300)
 
-ggsave(file = paste0("sim study/results/figure 3.tiff"), width = 7.5, height = 3.5, dpi = 600)
+fig_intwidthvar_250 <- annotate_figure(fig_intwidthvar_250, 
+                          top = text_grob("Joshua Alampi, Figure 3. This is the top of the figure",
+                                             size = 9))
+
+ggsave(file = paste0("sim study/results/figure 3.tiff"), width = 7.5, height = 3.5, dpi = 800)
 ```
 
 #### supp
@@ -1075,7 +1084,11 @@ fig_sp_countvscnts <- ggarrange(fig__sp_bias, fig_sp_empSE,
 
 # ggsave(file = paste0("sim study/results/fig_sp_countvscnts", "_",  Sys.Date(), ".png"), width = 7.5, height = 9.5, dpi = 300)
 
-ggsave(file = paste0("sim study/results/figure 4.tiff"), width = 7.5, height = 9.5, dpi = 600)
+fig_sp_countvscnts <- annotate_figure(fig_sp_countvscnts, 
+                          top = text_grob("Joshua Alampi, Figure 4. This is the top of the figure",
+                                             size = 9))
+
+ggsave(file = paste0("sim study/results/figure 4.tiff"), width = 7.5, height = 9.5, dpi = 800)
 ```
 
 
@@ -1436,134 +1449,6 @@ fig_empSE_all <- ggarrange(fig_empSE_cvsc_100, fig_empSE_cvsc_250, fig_empSE_cvs
                           common.legend = T, ncol = 1, legend = "bottom")
 
 ggsave(file = paste0("sim study/results/fig_empSE_countvscnts", "_",  Sys.Date(), ".png"), width = 7.5, height = 9.5, dpi = 300)
-```
-
-
-# OLD
-
-
-### Table: Intwidth variability
-```{r}
-variability <- res_count %>% 
-  filter(tau == "0.9") %>% 
-  select(c(n, method, model, intwidth_empSE)) %>% 
-  pivot_wider(names_from = model, values_from = intwidth_empSE) %>% 
-  arrange(n)
-
-variability_se <- res_count %>% 
-  filter(tau == "0.9") %>% 
-  select(c(n, method, model, intwidth_empSE_se)) %>% 
-  pivot_wider(names_from = model, values_from = intwidth_empSE_se) %>% 
-  arrange(n)
-
-
-
-#save as a MS excel file
-# write_xlsx(variability, path = paste0("sim study/results/table_interval EMPse_1000_sims", "_",  Sys.Date(), ".xlsx", sep = ""))
-# write_xlsx(variability_se, path = paste0("sim study/results/table_interval EMPse_se_1000_sims", "_",  Sys.Date(), ".xlsx", sep = ""))
-
-# Do not need this anymore
-```
-
-## intwidth 
-
-
-```{r}
-fig_intwidthvar_100 <- res_count %>% 
-  filter(tau == 0.9) %>% 
-  filter(n == "n = 100") %>% 
-  mutate(intwidth_empSE = ifelse(method == "mcmb" & model == "Model 3",
-         NA, intwidth_empSE) ) %>%
-  mutate(intwidth_empSE_se = ifelse(method == "mcmb" & model == "Model 3",
-         NA, intwidth_empSE_se) ) %>%
-  mutate(blank = ifelse(method == "mcmb" & model == "Model 3",
-         T, blank) ) %>% 
-  mutate(method = fct_rev(method)) %>% 
-  gg_geom_point(x = method, y = intwidth_empSE, ymin = intwidth_empSE - intwidth_empSE_se, 
-                ymax = intwidth_empSE + intwidth_empSE_se,
-                shape = blank, shape_vec = c(1, 4), shape_title = NULL,
-                colour = group, col_title = "Quantile regression method family", legend.direction = "horizontal",
-                facet_type = "grid", hori = "model", p_dodge = F, scales = "free_x",
-                ylab = "Empirical standard deviation of 90% intervals \n(+/- 1 Monte Carlo standard error)",
-                xlab = "Quantile regression method",
-                title = "A) n = 100", text_size_title = 10,
-                text_size_minor = 7, text_size_major = 9,
-                yint = NULL, coord_flip = T, ystrip_angle = 0,
-                panel.spacing.x = 0.1, panel.spacing.y = 0.05) + 
-  scale_y_continuous(labels = number_format(accuracy = 0.1) )
-
-fig_intwidthvar_250 <- res_count %>% 
-  filter(tau == 0.9) %>% 
-  filter(n == "n = 250") %>% 
-  mutate(intwidth_empSE = ifelse(method == "mcmb" & model == "Model 3",
-         NA, intwidth_empSE) ) %>%
-  mutate(intwidth_empSE_se = ifelse(method == "mcmb" & model == "Model 3",
-         NA, intwidth_empSE_se) ) %>%
-  mutate(blank = ifelse(method == "mcmb" & model == "Model 3",
-         T, blank) ) %>% 
-  mutate(method = fct_rev(method)) %>% 
-  gg_geom_point(x = method, y = intwidth_empSE, ymin = intwidth_empSE - intwidth_empSE_se, 
-                ymax = intwidth_empSE + intwidth_empSE_se,
-                shape = blank, shape_vec = c(1, 4), shape_title = NULL,
-                colour = group, col_title = "Quantile regression method family", legend.direction = "horizontal",
-                facet_type = "grid", hori = "model", p_dodge = F, scales = "free_x",
-                ylab = "Empirical standard deviation of 90% intervals \n(+/- 1 Monte Carlo standard error)",
-                xlab = "Quantile regression method",
-                title = "B) n = 250", text_size_title = 10,
-                text_size_minor = 7, text_size_major = 9,
-                yint = NULL, coord_flip = T, ystrip_angle = 0,
-                panel.spacing.x = 0.1, panel.spacing.y = 0.05) + 
-  scale_y_continuous(labels = number_format(accuracy = 0.1) )
-
-fig_intwidthvar_500 <- res_count %>% 
-  filter(tau == 0.9) %>% 
-  filter(n == "n = 500") %>% 
-  mutate(intwidth_empSE = ifelse(method == "mcmb" & model == "Model 3",
-         NA, intwidth_empSE) ) %>%
-  mutate(intwidth_empSE_se = ifelse(method == "mcmb" & model == "Model 3",
-         NA, intwidth_empSE_se) ) %>%
-  mutate(blank = ifelse(method == "mcmb" & model == "Model 3",
-         T, blank) ) %>% 
-  mutate(method = fct_rev(method)) %>% 
-  gg_geom_point(x = method, y = intwidth_empSE, ymin = intwidth_empSE - intwidth_empSE_se, 
-                ymax = intwidth_empSE + intwidth_empSE_se,
-                shape = blank, shape_vec = c(1, 4), shape_title = NULL,
-                colour = group, col_title = "Quantile regression method family", legend.direction = "horizontal",
-                facet_type = "grid", hori = "model", p_dodge = F, scales = "free_x",
-                ylab = "Empirical standard deviation of 90% intervals \n(+/- 1 Monte Carlo standard error)",
-                xlab = "Quantile regression method",
-                title = "C) n = 500", text_size_title = 10,
-                text_size_minor = 7, text_size_major = 9,
-                yint = NULL, coord_flip = T, ystrip_angle = 0,
-                panel.spacing.x = 0.1, panel.spacing.y = 0.05) + 
-  scale_y_continuous(labels = number_format(accuracy = 0.05) )
-
-fig_intwidthvar_all <- ggarrange(fig_intwidthvar_100, fig_intwidthvar_250, fig_intwidthvar_500,
-                                 common.legend = T, ncol = 1, legend = "bottom")
-
-ggsave(file = paste0("sim study/results/fig_intwidthvar_all", "_",  Sys.Date(), ".png"), width = 7.5, height = 9.5, dpi = 300)
-```
-
-
-```{r}
-
-res_cnts_v2 <- res_cnts
-res_cnts_v2$method <- res_cnts$method %>% 
-  mapvalues("iid", "iid (cnts)") %>% 
-  mapvalues("nid", "nid (cnts)") %>% 
-  mapvalues("ker", "ker (cnts)") %>% 
-  mapvalues("riid", "riid (cnts)") %>% 
-  mapvalues("rnid", "rnid (cnts)") %>% 
-  mapvalues("xy", "xy (cnts)") %>% 
-  mapvalues("wxy", "wxy (cnts)") %>% 
-  mapvalues("pwy", "pwy (cnts)") %>% 
-  mapvalues("mcmb", "mcmb (cnts)") %>% 
-  mapvalues("wild", "wild (cnts)") %>% 
-  mapvalues("pbs", "pbs (cnts)") 
-
-res_count_vs_cnts_v2 <- rbind(res_count, res_cnts_v2) # Reformatting v1 
-
-
 ```
 
 
