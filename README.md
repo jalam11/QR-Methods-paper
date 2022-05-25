@@ -19,7 +19,7 @@ I considered the following methods in this paper
 The bnid method that came with the BayesQR package (i.e. the "adjusted" results, referred to as "bayes_adj_v1" in my code) was clearly not functioning correctly (it gave implausibly large posterior credibility intervals, and had 100% coverage). We thus created our own function (see "summary_sanwich.R"; these results are referred to as "bayes_adj_v2" in my code) to implement the adjustment to the covariance matrix proposed by Yang et al. (2016). 
 
 
-The Monte Carlo experiment was conducted with the following .Rmd files: 
+**The Monte Carlo experiment was conducted with the following .Rmd files:**
 
 ss_Main.Rmd = The code for the simulation study (part 2 of the results, and the "circles" in part 3. Also used in Figure 1c-d). 
 - Includes both the Bayesian and frequentist methods.
@@ -41,7 +41,8 @@ ss_Main_no dith.Rmd = The code for the simulation study (part 1 only, specifical
 
 NOTE: Output files are compressed using WinRAR. 
 
-The results from the Monte Carlo experiment were generated from the raw .csv files with the following .Rmd files:
+
+**The results from the Monte Carlo experiment were generated from the raw .csv files with the following .Rmd files:**
 
 res_ss_v3
 - Cleans the results
