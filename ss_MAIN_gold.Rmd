@@ -339,55 +339,5 @@ write.csv(table, row.names = F, file = paste0("sim study/raw results/table_ss_JA
 ```
 
 
-# record of parameters
-
-## Oct 27, 2021 ----
-*** Y is a real number, not an integer! No dithering is applied! ***
-
-z <- qnorm(0.95); z_lower <- 0.05; z_upper <- 0.95; level = 0.9 # For creating 90% Confidence intervals. 
-
-paras <- list( c(1, 100), c(1, 250), c(1, 500), # Model 1: IID, normal x and errors
-               c(2, 100), c(2, 250), c(2, 500), # Model 2: NID, normal x and errors
-               c(3, 100), c(3, 250), c(3, 500), # Model 3: NID, log-normal x, normal errors
-               c(4, 100), c(4, 250), c(4, 500)) # Model 4: NID, normal x, emg errors
-nsims <- 1000
-m <- 14 
-taus <- c(0.1, 0.3, 0.5, 0.7, 0.9)
-mu_x <- 0
-sigma_x <- 1
-gamma <- 0.1
-prob_x2 <- 0.2
-beta0 <- 44
-beta1 <- 0.5
-beta2 <- 2.5
-mu_u <- 0
-sigma_u <- 1
-lambda_u <- 0.4 # controls skewness (model 4 only)
-alpha_y <- 5
-
-boot <- 1000
-ndraw <- 10000
-burnin <- 2000
-
-x2 <- rbinom(n, 1, prob_x2)
-
-if(model == 3){
-  x1 <- rlnorm(n, mu_x + gamma*x2, sigma_x)
-} else {
-  x1 <- rnorm(n, mu_x + gamma*x2, sigma_x)
-}
-
-if(model == 4){
-  e <- remg(n, mu_u, sigma_u, lambda_u)
-} else {
-  e <- rnorm(n, mu_u, sigma_u)
-}
-
-y <- beta0 + beta1*x1 + beta2*x2 + e*(alpha_y + alpha_x1*x1)
-
-
-
-
-
 
 
