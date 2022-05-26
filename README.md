@@ -53,10 +53,17 @@ res_ss_tables
 - Cleans the results
 - Creates all of the tables
 
-res_ss_sup tables
-- Cleans the results
-- Creates all the supplementary tables (i.e. the tabulated results from the figures)
-
 res_ss_irreg_v2
 - Cleans the results
 - Makes Figure 1
+
+res_ss_sup tables
+- Cleans the results
+- Creates all the supplementary tables (i.e. the tabulated results from the figures)
+- The output for this is "Supp_tabulated results.xlsx". 
+
+The file "Supp_tabulated results.xlsx" contains 4 tables:
+- Excel Table S1 corresponds to the tabulated results from Figure 2 and Figure S1. 
+- Excel Table S2 corresponds to the tabulated results from Figure 3 and Figure S2.
+- Excel Table S3 corresponds to the tabulated results from Figure 4 and Figure S3.  
+- Excel Table S4 corresponds to the tabulated results from Figure 4 and Figure S4. 
