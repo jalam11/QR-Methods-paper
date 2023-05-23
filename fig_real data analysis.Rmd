@@ -1,0 +1,160 @@
+---
+title: "fig_real data analysis"
+author: "Josh Alampi"
+date: "2022-10-06"
+output: html_document
+---
+
+# load
+```{r}
+#clear workspace
+rm(list=ls(all=TRUE))
+
+#load packages
+library(readr); library(writexl) # for read_csv(); write_xlsx()  
+library(plyr) # mapvalues()
+library(MASS)
+library(dplyr)
+library(tidyr) # for gather()
+library(ggplot2)
+library(ggrepel); library(ggpubr); library(scales) # extra ggplot features
+library(signs) # for signs_format(), uses proper minus sign instead of hyphen
+library(lmtest) # for bptest()
+library(quantreg)
+library(bayesQR)
+select <- dplyr::select
+# library(rstan)
+# library(emg) # for exponentially modified gaussian model
+source("functions/ggplot functions.R")
+
+# load data
+data <- read.csv("sim study/results/real data/table_real results_2023-05-05.csv")
+
+# Include a couple of chemicals to demonstrates a real-life application of quantile regression
+data <- data %>%
+  mutate(name = factor(name, c("arsenic.t1.res", "lead.t1.res", "bbhc.t1.res", "sum.pcb.t1.res")))
+
+is_integer <- function(x) {
+  response <- ifelse(abs(x) %% 1 < 1e-12, "Yes", "No")
+  return(response)
+}
+
+data <- data %>% 
+  mutate(rounded = is_integer(beta))  
+
+```
+
+# clean data
+## fix class
+```{r}
+data$beta <- as.numeric(data$beta)
+data$lb <- as.numeric(data$lb)
+data$ub <- as.numeric(data$ub)
+data$tau <- as.factor(data$tau)
+```
+
+## fix names
+```{r}
+data$name <- data$name %>% 
+  mapvalues("bbhc.t1.res", "β-HCH") %>% # β-Hexachlorocyclohexane
+  mapvalues("sum.pcb.t1.res", "ΣPCBs") %>%
+  mapvalues("arsenic.t1.res", "Arsenic") %>% 
+  mapvalues("lead.t1.res", "Lead") 
+
+data$method <- data$method %>% # shorten the Bayesian methods' names
+  mapvalues("bayes_adj_v2", "bnid") %>% 
+  mapvalues("bayes", "biid")
+
+```
+
+## make class var
+```{r}
+data <- data %>% 
+  mutate(group = ifelse(method %in% c("biid", "bnid"), 
+                      "Bayesian",
+                      ifelse(method %in% c("iid", "nid"), 
+                             "Frequentist: Wald/ direct \ninference intervals",
+                             ifelse(method %in% c("riid", "rnid"),
+                                    "Frequentist: rank intervals",
+                                    "Frequentist- bootstrapped intervals"))))
+
+# force methods to be read in a particular order
+data$method <- factor(data$method, levels = c("biid", "bnid", 
+                                              "pbs", "wild", "xy", 
+                                              "nid", "riid", "rnid"))
+
+data <- data %>% 
+  mutate(method_final = ifelse(dithering == "No" & group != "Bayesian", 
+                       "Frequentist QR",
+                       ifelse(dithering == "Yes" & group != "Bayesian",
+                              "Dithered Frequentist QR",
+                              ifelse(dithering == "No" & group == "Bayesian",
+                                     "Bayesian QR",
+                                     NA)))) 
+
+# force method families into a particular order
+data$method_final <- factor(data$method_final,
+                            levels = c("Frequentist QR", "Dithered Frequentist QR", "Bayesian QR"))
+
+
+data$method_final <- data$method_final %>% 
+  mapvalues("Frequentist QR", 
+            "Frequentist \nquantile \nregression \nwithout \ndithering \n(riid intervals)") %>% 
+  mapvalues("Dithered Frequentist QR", 
+            "Frequentist \nquantile \nregression \nwith \ndithering \n(riid intervals)") %>% 
+  mapvalues("Bayesian QR", 
+            "Bayesian \nquantile \nregression \n(biid intervals)") 
+```
+
+
+# make figs
+```{r}
+xlab <- "Quantile"
+ylab <- "Estimated difference in SRS Score per 2-fold increase in chemical concentration"
+col_title <- "QR method family"
+shape_title = "Point estimate rounded to zero?"
+```
+
+## demonstrating qr problem (section 2)
+```{r}
+fig <- data %>% 
+  filter(method %in% c("riid", "biid")) %>% 
+  gg_geom_point(x =tau, y = beta, ymin = lb, ymax = ub,
+                shape = rounded, shape_vec = c(1, 5), shape_title = shape_title,
+                # colour = group, col_title = col_title, 
+                legend.direction = "horizontal", 
+                facet_type = "grid", hori = "name", vert = "method_final", scales = "free",
+                ylab = ylab, xlab = xlab,
+                text_size_minor = 7, text_size_major = 9, yint = 0, 
+                coord_flip = T, ystrip_angle = 0) +
+  theme(legend.text.align = 0.5)
+
+ggsave(file = paste0("sim study/results/real data/fig_demonstrating problem", "_",  Sys.Date(), ".png"), 
+       width = 7, height = 4, dpi = 300)
+```
+
+## comparing methods (section 5.3)
+Will use dithered frequentist QR methods, and undithered Bayesian QR methods
+```{r}
+fig <- data %>% 
+  mutate(blank = F) %>% 
+  filter(method_final != "Frequentist \nquantile \nregression \nwithout \ndithering \n(riid intervals)") %>% 
+  gg_geom_point(x =tau, y = beta, ymin = lb, ymax = ub,
+                shape = blank, shape_vec = c(1), shape_title = NULL,
+                colour = group, col_title = col_title, 
+                legend.direction = "horizontal", 
+                facet_type = "grid", hori = "name", vert = "method", scales = "free",
+                ylab = ylab, xlab = xlab,
+                text_size_minor = 7, text_size_major = 9, yint = 0, 
+                coord_flip = T, ystrip_angle = 0) + 
+  guides(colour = guide_legend(ncol = 4))
+
+fig
+
+ggsave(file = paste0("sim study/results/real data/fig_all methods", "_",  Sys.Date(), ".png"), width = 7, height = 6, dpi = 300)
+```
+
+```{r}
+
+```
+

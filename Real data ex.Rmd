@@ -1,0 +1,380 @@
+---
+title: "Real data ex"
+author: "Josh Alampi"
+date: "2022-10-05"
+output: html_document
+---
+
+# load
+```{r}
+#clear workspace
+rm(list=ls(all=TRUE))
+
+#load packages
+library(readr); library(writexl) # for read_csv(); write_xlsx()  
+library(plyr) # mapvalues()
+library(MASS)
+library(dplyr)
+library(tidyr) # for gather()
+library(ggplot2)
+library(ggrepel); library(ggpubr); library(scales) # extra ggplot features
+library(signs) # for signs_format(), uses proper minus sign instead of hyphen
+library(lmtest) # for bptest()
+library(quantreg)
+library(bayesQR)
+select <- dplyr::select
+# library(rstan)
+# library(emg) # for exponentially modified gaussian model
+source("functions/summary_sanwich.R")
+
+data <- read.csv("//ais-fs1.sfu.ca/home2/Redirected_Profiles/jalampi/Desktop/MIREC loader 2022/clean data/2022-10-05_MIREC data_sim study.csv")
+
+```
+
+# clean
+## remove rows with missing data
+```{r}
+data <- data %>% 
+  filter(num.babies3 == 1) %>% 
+  filter(is.na(srs) == F) %>% 
+  filter(is.na(edu4) == F) %>% 
+  filter(is.na(income4) == F) %>% 
+  filter(is.na(arsenic.t1.res)==F) %>%
+  filter(is.na(lead.t1.res)==F) %>% 
+  filter(is.na(bbhc.t1.res) == F) %>% 
+  filter(is.na(sum.pcb.t1.res) == F) 
+
+
+```
+
+
+## make chems
+```{r}
+chems <- data %>% 
+  select(arsenic.t1.res, lead.t1.res, bbhc.t1.res, sum.pcb.t1.res)
+```
+
+## make dummy vars
+```{r}
+#Make dummy variables for income
+data$inc.040 <- rep(0, dim(data)[1])
+data$inc.040[data$income4==1] <- 1
+
+#for mom.age:
+data$age.1 <- rep(0, dim(data)[1])
+data$age.1[data$mom.age3==1] <-1
+
+#for education:
+data$edu.HS <- rep(0,dim(data)[1])
+data$edu.HS[data$edu4==1] <-1
+
+#for parity:
+data$par0 <- rep(0,dim(data)[1])
+data$par0[data$parity3==1] <- 1
+
+```
+
+# prep
+```{r}
+# number of methods used. Allows for less coded needing to be written in case I need to change the # of methods
+m_dith <- 6 
+m_nodith <- 8
+```
+
+
+```{r}
+numchems <- length(chems)
+taus <- c(0.1, 0.3, 0.5, 0.7, 0.9)
+num_tau <- length(taus)
+```
+
+```{r}
+# make container for the results
+table_dith <- setNames(data.frame(matrix(data = NA, 
+                                    nrow = numchems * num_tau * m_dith, 
+                                    ncol = 7)), 
+                  c("method", "beta", "lb", "ub", "tau", "name", "dithering")) #set column names
+
+table_nodith <- setNames(data.frame(matrix(data = NA, 
+                                    nrow = numchems * num_tau * m_nodith, 
+                                    ncol = 7)), 
+                  c("method", "beta", "lb", "ub", "tau", "name", "dithering")) #set column names
+```
+
+```{r}
+z <- qnorm(0.975); z_lower <- 0.025; z_upper <- 0.975; level = 0.95 # For creating 95% Confidence intervals.
+```
+
+```{r}
+# misc parameters
+boot <- 1000
+ndraw <- 27000 # from previous research
+burnin <- 2000
+n <- nrow(data)
+```
+
+## dithering
+```{r}
+set.seed(1010)
+
+attach(data)
+
+y_dith <- dither(srs)
+y <- srs
+
+for(i in 1:numchems){ 
+  
+  name <- colnames(chems)[i] # select name
+  x <- log2((chems)[[i]])
+  mat <- cbind(1, x, sex2, inc.040, edu.HS, living.status2, par0, race.white2, age.1)
+  
+  
+  for(j in 1:num_tau){ 
+    print(paste0("Chemical ", i, " of ", numchems, "and Tau ", j, " of ", num_tau))
+    
+    tau <- taus[j]
+    
+    # make models
+    rq_model <- rq(y_dith ~ x + sex2 + inc.040 + edu.HS + living.status2 + par0 + race.white2 + age.1, 
+                   tau = tau)
+    boot_dist <- (boot.rq(mat, y_dith, tau = tau, R = boot))$B[,2]
+    
+    # Extract betas and intervals
+    
+    ## nid
+    nid_beta <- summary(rq_model, se = "nid")[[3]][2,1]
+    nid_se <- summary(rq_model, se="nid")[[3]][2,2]
+    
+    ## rank, iid
+    riid <- summary(rq_model, se = "rank", iid = T, alpha = z_lower*2)[[3]][2,]
+    riid_beta <- riid[1]; riid_lb <- riid[2]; riid_ub <- riid[3]
+
+    ## rank, nid
+    rnid <- summary(rq_model, se = "rank", iid = F, alpha = z_lower*2)[[3]][2,]
+    rnid_beta <- rnid[1]; rnid_lb <- rnid[2]; rnid_ub <- rnid[3]
+
+    ## boot, xy
+    xy_coef <- summary(rq_model, se = "boot", bsmethod ="xy", R = boot)[[3]][2,1:2]
+    xy_beta <- xy_coef[1]; xy_se <- xy_coef[2]
+      
+    ## boot, wild
+    wild_coef <- summary(rq_model, se = "boot", bsmethod ="wild", R = boot)[[3]][2,1:2]
+    wild_beta <- wild_coef[1]; wild_se <- wild_coef[2]
+    
+    ## boot, pbs
+    pbs_lb <- quantile(boot_dist, z_lower)
+    pbs_ub <- quantile(boot_dist, z_upper)
+    
+    
+    #  Store values 
+    skip <- m_dith * (j-1) + m_dith * num_tau * (i-1)
+    lower_range <- skip + 1
+    upper_range <- skip + m_dith
+    
+    ## names
+    table_dith[skip +1, 1] <- "nid"; 
+    table_dith[skip +2, 1] <- "riid"
+    table_dith[skip +3, 1] <- "rnid"
+    table_dith[skip +4, 1] <- "xy"
+    table_dith[skip +5, 1] <- "wild"; 
+    table_dith[skip +6, 1] <- "pbs"
+    
+    ## beta
+    table_dith[skip +1, 2] <- nid_beta
+    table_dith[skip +2, 2] <- riid_beta
+    table_dith[skip +3, 2] <- rnid_beta
+    table_dith[skip +4, 2] <- xy_beta
+    table_dith[skip +5, 2] <- wild_beta
+    table_dith[skip +6, 2] <- xy_beta
+    
+    ## lb
+    table_dith[skip +1, 3] <- nid_beta - z*nid_se
+    table_dith[skip +2, 3] <- riid_lb
+    table_dith[skip +3, 3] <- rnid_lb
+    table_dith[skip +4, 3] <- xy_beta - z*xy_se
+    table_dith[skip +5, 3] <- wild_beta - z*wild_se
+    table_dith[skip +6, 3] <- pbs_lb
+    
+    ## ub
+    table_dith[skip +1, 4] <- nid_beta + z*nid_se
+    table_dith[skip +2, 4] <- riid_ub
+    table_dith[skip +3, 4] <- rnid_ub
+    table_dith[skip +4, 4] <- xy_beta + z*xy_se
+    table_dith[skip +5, 4] <- wild_beta + z*wild_se
+    table_dith[skip +6, 4] <- pbs_ub
+    
+    ## The rest
+    table_dith[lower_range:upper_range,5] <- tau
+    table_dith[lower_range:upper_range,6] <- paste0(name)
+    table_dith[lower_range:upper_range,7] <- "Yes"
+    
+  }
+  
+}
+
+
+detach(data)
+
+
+```
+
+## no dithering
+```{r}
+set.seed(1010)
+
+attach(data)
+
+y <- srs
+
+for(i in 1:numchems){ 
+  
+  name <- colnames(chems)[i] # select name
+  x <- log2((chems)[[i]])
+  mat <- cbind(1, x, sex2, inc.040, edu.HS, living.status2, par0, race.white2, age.1)
+  
+  
+  for(j in 1:num_tau){ 
+    print(paste0("Chemical ", i, " of ", numchems, " and Tau ", j, " of ", num_tau))
+    
+    tau <- taus[j]
+    
+    # make models
+    rq_model <- rq(y ~ x + sex2 + inc.040 + edu.HS + living.status2 + par0 + race.white2 + age.1, 
+                   tau = tau)
+    boot_dist <- (boot.rq(mat, y, tau = tau, R = boot))$B[,2]
+    
+    # sink(file="bayesQR.txt") # store BayesQR output text (it is very long and annoying)
+    bqr_model <- bayesQR(y~ x+ sex2 + inc.040 + edu.HS + living.status2 + par0 + race.white2 + age.1, 
+                         quantile = tau, ndraw = ndraw)
+    
+    if (mean(bqr_model[[1]]$beta[,2]) == "NaN" ) {
+        bqr_model <- bayesQR(y~ x+ sex2 + inc.040 + edu.HS + living.status2 + par0 + race.white2 + age.1, 
+                         quantile = tau, ndraw = ndraw)
+    } 
+    
+    if (mean(bqr_model[[1]]$beta[,2]) == "NaN" ){
+        bqr_model <- bayesQR(y~ x+ sex2 + inc.040 + edu.HS + living.status2 + par0 + race.white2 + age.1, 
+                             quantile = tau, ndraw = ndraw)
+    }
+    
+    # Extract betas and intervals
+    
+    ## nid
+    nid_beta <- summary(rq_model, se = "nid")[[3]][2,1]
+    nid_se <- summary(rq_model, se="nid")[[3]][2,2]
+    
+    ## rank, iid
+    riid <- summary(rq_model, se = "rank", iid = T, alpha = z_lower*2)[[3]][2,]
+    riid_beta <- riid[1]; riid_lb <- riid[2]; riid_ub <- riid[3]
+
+    ## rank, nid
+    rnid <- summary(rq_model, se = "rank", iid = F, alpha = z_lower*2)[[3]][2,]
+    rnid_beta <- rnid[1]; rnid_lb <- rnid[2]; rnid_ub <- rnid[3]
+
+    ## boot, xy
+    xy_coef <- summary(rq_model, se = "boot", bsmethod ="xy", R = boot)[[3]][2,1:2]
+    xy_beta <- xy_coef[1]; xy_se <- xy_coef[2]
+      
+    ## boot, wild
+    wild_coef <- summary(rq_model, se = "boot", bsmethod ="wild", R = boot)[[3]][2,1:2]
+    wild_beta <- wild_coef[1]; wild_se <- wild_coef[2]
+    
+    ## boot, pbs
+    pbs_lb <- quantile(boot_dist, z_lower)
+    pbs_ub <- quantile(boot_dist, z_upper)
+    
+    ## Bayesian, unadjusted
+    bayes_coef <- summary(bqr_model, burnin = burnin, credint = c(z_lower, z_upper))[[1]]$betadraw[2,]
+    bayes_beta <- bayes_coef[1]; bayes_lb <- bayes_coef[2]; bayes_ub <- bayes_coef[3]
+    
+    ## Bayesian, adjusted
+    bayes_adj_sw <- summary_sw(bqr_model, n = n, burnin = burnin, covariates= mat, level =level)
+    bayes_adjv2_beta <- bayes_adj_sw[1]
+    bayes_adjv2_lb <- bayes_adj_sw[2]; bayes_adjv2_ub <- bayes_adj_sw[3]
+    
+    
+    #  Store values 
+    skip <- m_nodith * (j-1) + m_nodith * num_tau * (i-1)
+    lower_range <- skip + 1
+    upper_range <- skip + m_nodith
+    
+    ## names
+    table_nodith[skip +1, 1] <- "nid"; 
+    table_nodith[skip +2, 1] <- "riid"
+    table_nodith[skip +3, 1] <- "rnid"
+    table_nodith[skip +4, 1] <- "xy"
+    table_nodith[skip +5, 1] <- "wild"; 
+    table_nodith[skip +6, 1] <- "pbs"
+    table_nodith[skip +7, 1] <- "bayes"
+    table_nodith[skip +8, 1] <- "bayes_adj_v2"
+    
+    ## beta
+    table_nodith[skip +1, 2] <- nid_beta
+    table_nodith[skip +2, 2] <- riid_beta
+    table_nodith[skip +3, 2] <- rnid_beta
+    table_nodith[skip +4, 2] <- xy_beta
+    table_nodith[skip +5, 2] <- wild_beta
+    table_nodith[skip +6, 2] <- xy_beta
+    table_nodith[skip +7, 2] <- bayes_beta
+    table_nodith[skip +8, 2] <- bayes_adjv2_beta
+    
+    ## lb
+    table_nodith[skip +1, 3] <- nid_beta - z*nid_se
+    table_nodith[skip +2, 3] <- riid_lb
+    table_nodith[skip +3, 3] <- rnid_lb
+    table_nodith[skip +4, 3] <- xy_beta - z*xy_se
+    table_nodith[skip +5, 3] <- wild_beta - z*wild_se
+    table_nodith[skip +6, 3] <- pbs_lb
+    table_nodith[skip +7, 3] <- bayes_lb
+    table_nodith[skip +8, 3] <- bayes_adjv2_lb
+    
+    ## ub
+    table_nodith[skip +1, 4] <- nid_beta + z*nid_se
+    table_nodith[skip +2, 4] <- riid_ub
+    table_nodith[skip +3, 4] <- rnid_ub
+    table_nodith[skip +4, 4] <- xy_beta + z*xy_se
+    table_nodith[skip +5, 4] <- wild_beta + z*wild_se
+    table_nodith[skip +6, 4] <- pbs_ub
+    table_nodith[skip +7, 4] <- bayes_ub
+    table_nodith[skip +8, 4] <- bayes_adjv2_ub
+    
+    ## The rest
+    table_nodith[lower_range:upper_range,5] <- tau
+    table_nodith[lower_range:upper_range,6] <- paste0(name)
+    table_nodith[lower_range:upper_range,7] <- "No"
+    
+  }
+  
+}
+
+
+detach(data)
+
+
+```
+
+
+```{r}
+table_all <- rbind(table_dith, table_nodith)
+```
+
+# save
+```{r}
+#save as a csv file
+write.csv(table_all, row.names = F, file = paste0("sim study/results/real data/table_real results", "_",  Sys.Date(), ".csv", sep = ""))
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
