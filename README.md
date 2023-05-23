@@ -5,6 +5,7 @@ Note that for the "bnid" method that came with the BayesQR package (i.e. the "ad
 
 
 **The Monte Carlo experiment was conducted with the following .Rmd files:**
+
 NOTE: Output files are compressed using WinRAR. 
 
 ss_Main.Rmd = The code for the simulation study (Section 5.1 of the paper, and the "circles" in 5.2. Also used in Figure S1c-d). 
@@ -24,11 +25,11 @@ ss_Main_no dith.Rmd = The code for the simulation study (only used for Figure S1
 - Dithering is NOT applied
 - Output: "table_ss_no dith_v2_2021-08-04_1000_sims.csv"
 
-** The figures and tables were generated with the following .Rmd files **
+**The figures and tables based on simulated data were generated with the following .Rmd files**
 
 res_ss_v3
 - Cleans the results
-- Creates all figures except for figure S1, the figures which used the MIREC data
+- Creates all figures except for figure S1
 - Uses the helper functions in "ggplot_functions.R" to generate the figures
 
 res_ss_tables
@@ -40,3 +41,12 @@ res_ss_irreg_v2
 - Makes Figure S1
 
 
+**The figures based on the MIREC data were generated with the following .Rmd files**
+
+Read data ex.Rmd
+- Models the relationship between 4 chemicals (1st trimester concentrations, log2-transformed) and SRS scores using all methods discussed in paper
+- Output: "table_real results_2023-05-05.csv"
+
+fig_real data analysis.Rmd
+- Uses "table_real results_2023-05-05.csv" to generate Figure 1 and Figure 5
+- Uses the helper functions in "ggplot_functions.R" 
