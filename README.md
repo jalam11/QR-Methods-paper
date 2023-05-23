@@ -14,13 +14,13 @@ ss_Main.Rmd = The code for the simulation study (Section 5.1 of the paper, and t
 - The frequestist methods are dithered, but the Bayesian ones are not. 
 - Output: "table_ss_JA model_2021-08-07_1000_sims.csv"
 
-ss_Main_gold.Rmd = The code for the simulation study (Section 5.2 of the paper/ the "squares" only. Also used in Figure 1a)
+ss_Main_gold.Rmd = The code for the simulation study (The "squares" in section 5.2. Also used in Figure 1a).
 - Only includes the frequentist methods.
 - Y is a continuous variable (the original unrounded y). 
 - Dithering is not applied. 
 - Output: "table_ss_JA moel_gold_2021-10-28_1000_sims.csv"
 
-ss_Main_no dith.Rmd = The code for the simulation study (only used for Figure S1b)
+ss_Main_no dith.Rmd = The code for the simulation study (only used for Figure S1b).
 - Y is a count variable
 - Dithering is NOT applied
 - Output: "table_ss_no dith_v2_2021-08-04_1000_sims.csv"
