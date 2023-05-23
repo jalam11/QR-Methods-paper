@@ -12,8 +12,8 @@ rm(list=ls(all=TRUE))
 
 #load packages
 library(readr); library(writexl) # for read_csv(); write_xlsx()
-library(plyr) # mapvalues()
 library(MASS)
+library(plyr) # mapvalues()
 library(dplyr)
 library(tidyr) # for gather()
 library(ggplot2)
@@ -24,7 +24,7 @@ library(quantreg)
 library(bayesQR)
 select <- dplyr::select
 library(rstan)
-library(tidyverse)
+
 source("functions/ggplot functions.R")
 source("functions/general_functions.R")
 ```
@@ -166,28 +166,28 @@ data1$method <- factor(data1$method, levels = c("iid", "nid", "ker", "riid", "rn
                                             "biid", "bnid"))
 ```
 
-Testing
-```{r}
-# OLD: used for testing intwidth_var
-data_variability <- data %>% 
-  mutate(n = paste0(("n = "), n)) %>% 
-  mutate(intwidth_rel = int_width - mean_intwidth) %>% 
-  filter(is.na(intwidth_rel) == F) %>% 
-  mutate(infin_flag = ifelse(is.infinite(lb) == T | is.infinite(ub) == T, # flag rows w infinite intervals
-                             T, # interval is degenerate
-                             F) )
+<!-- Testing -->
+<!-- ```{r} -->
+<!-- # OLD: used for testing intwidth_var -->
+<!-- data_variability <- data %>%  -->
+<!--   mutate(n = paste0(("n = "), n)) %>%  -->
+<!--   mutate(intwidth_rel = int_width - mean_intwidth) %>%  -->
+<!--   filter(is.na(intwidth_rel) == F) %>%  -->
+<!--   mutate(infin_flag = ifelse(is.infinite(lb) == T | is.infinite(ub) == T, # flag rows w infinite intervals -->
+<!--                              T, # interval is degenerate -->
+<!--                              F) ) -->
 
 
 
-data_mcmb_notconverged <- data1 %>% 
-  filter(method == "mcmb") %>% 
-  # filter(is.na(beta) == T) %>% 
-  filter(model == "Model 3")
-```
+<!-- data_mcmb_notconverged <- data1 %>%  -->
+<!--   filter(method == "mcmb") %>%  -->
+<!--   # filter(is.na(beta) == T) %>%  -->
+<!--   filter(model == "Model 3") -->
+<!-- ``` -->
 
-```{r}
-rm(data_mcmb_notconverged)
-```
+<!-- ```{r} -->
+<!-- rm(data_mcmb_notconverged) -->
+<!-- ``` -->
 
 ## filter "data"
 ```{r}
@@ -325,23 +325,49 @@ write_xlsx(bias_count_vs_cnts_final,
 ```
 
 ## empSE
-
+### bayes vs freq
 ```{r}
 sims <- 1000 
 round <- 2
 round_se <- 3
 round_p <- 20
 
+# calculate empSE, Monte Carlo SE of empSE for the Frequentist and Bayesian methods
 empSE_freq_vs_bayes <- data_short %>% 
   filter(status != "Freq. (cnts)") %>%
-  select(c(n, model, tau, group_reformat, bias, bias_rel)) %>% 
+  select(c(n, model, tau, group_reformat, beta, bias, bias_rel)) %>% 
   group_by(n, model, tau, group_reformat) %>% 
-  summarise(empSE = round(sqrt( sum((bias_rel)^2) / (sims - 1) ), round),
-            empSE_se = round(
-              empSE / sqrt( 2  * (sims - 1) ), round_se) 
+  summarise(empSE = sqrt( sum((bias_rel)^2) / (sims - 1) ),
+            empSE_se = empSE / sqrt( 2  * (sims - 1) ) 
   ) %>% 
   pivot_wider(names_from = group_reformat, values_from = c(empSE, empSE_se))
 
+
+# calculate correlation of beta between the Frequentist and Bayesian methods
+empSE_freq_vs_bayes_cor <- data_short %>%
+  filter(status != "Freq. (cnts)") %>%
+  select(c(n, model, tau, group_reformat, beta, bias, bias_rel)) %>% 
+  group_by(n, model, tau) %>%
+  summarise(cor = cor(beta[group_reformat == "Frequentist"],
+                      beta[group_reformat == "Bayesian"]))
+
+cor <- empSE_freq_vs_bayes_cor[,c(4)]
+cor <- as.data.frame(cor)
+empSE_freq_vs_bayes <- cbind(empSE_freq_vs_bayes, cor)
+rm(empSE_freq_vs_bayes_cor, cor)
+
+# calculate the relative % increase in precision, and Monte SE for it. 
+empSE_freq_vs_bayes_rel <- empSE_freq_vs_bayes %>% 
+  group_by(n, model, tau) %>% 
+  summarise(empSE_rel = 100*(((empSE_Frequentist/empSE_Bayesian)^2 ) - 1),
+            empSE_rel_se = 200*((empSE_Frequentist/empSE_Bayesian)^2) * 
+              sqrt((1-(cor)^2)/999) ###### for some reason "sims -1" causes code to break, so I typed in "999" instead. 
+            )
+
+rel <- empSE_freq_vs_bayes_rel[,c(4,5)]
+rel <- as.data.frame(rel)
+
+# calculate the p-value for difference in variability of 2 methods
 empSE_freq_vs_bayes_p <- data_short %>% 
   filter(status != "Freq. (cnts)") %>%
   select(c(n, model, tau, group_reformat, beta)) %>% 
@@ -352,86 +378,126 @@ empSE_freq_vs_bayes_p <- data_short %>%
   ) %>% 
   mutate(p_adj = p.adjust(p, n = 60, method = "bonferroni"))
 
-empSE_freq_vs_bayes_cor <- data_short %>% 
-  filter(status != "Freq. (cnts)") %>%
-  select(c(n, model, tau, group_reformat, beta)) %>% 
-  group_by(n, model, tau) %>% 
-  summarise(cor = cor(beta[group_reformat == "Frequentist"], 
-           beta[group_reformat == "Bayesian"])) # proves no correlation
-
-empSE_freq_vs_bayes <- as.data.frame(empSE_freq_vs_bayes)
-
 p <- empSE_freq_vs_bayes_p[,c(4,5)]
 p <- as.data.frame(p)
 colnames(p)[1] <- "p"; colnames(p)[2] <- "p_adj"
 
+
+# Merge everything together
+
+empSE_freq_vs_bayes <- as.data.frame(empSE_freq_vs_bayes)
+empSE_freq_vs_bayes <- cbind(empSE_freq_vs_bayes, rel)
 empSE_freq_vs_bayes_final <- cbind(empSE_freq_vs_bayes, p)
 
 empSE_freq_vs_bayes_final <- empSE_freq_vs_bayes_final %>% 
+  # round estimates
+  mutate(empSE_Bayesian = round(empSE_Bayesian, round)) %>% 
+  mutate(empSE_Frequentist = round(empSE_Frequentist, round)) %>% 
+  mutate(empSE_rel = round(empSE_rel, round-1)) %>% 
+  # round SE of estimates
+  mutate(empSE_se_Bayesian = round(empSE_se_Bayesian, round_se)) %>% 
+  mutate(empSE_se_Frequentist = round(empSE_se_Frequentist, round_se)) %>% 
+  mutate(empSE_rel_se = round(empSE_rel_se, round_se-1)) %>% 
+  # make p-values look better
   mutate(p_v2 = pvalue_rounder_v2(p)) %>% 
-  mutate(p_adj_v2 = pvalue_rounder_v2(p_adj)) 
+  mutate(p_adj_v2 = pvalue_rounder_v2(p_adj)) %>% 
+  select(-c(cor))
   
-  
-  # mutate(signif_flag = ifelse(p < 0.05,
-  #                             T, F))%>%
-  # mutate(dif = .[4] - .[5])
 
-rm(empSE_freq_vs_bayes, empSE_freq_vs_bayes_p, p)
+rm(empSE_freq_vs_bayes, empSE_freq_vs_bayes_p, p, empSE_freq_vs_bayes_rel, rel)
 
 write_xlsx(empSE_freq_vs_bayes_final, 
            path = paste0("sim study/results/tables/empSE_freqvsbayes_1000_sims", "_",  Sys.Date(), ".xlsx", sep = ""))
 ```
 
+
+### count vs cnts
 ```{r}
 sims <- 1000 
 round <- 2
 round_se <- 3
 round_p <- 20
 
+# calculate empSE, Monte Carlo SE from continuous and count data
 empSE_count_vs_cnts <- data_short %>% 
   filter(status != "Bayesian") %>%
-  select(c(n, model, tau, status, bias, bias_rel)) %>% 
+  select(c(n, model, tau, status, beta, bias, bias_rel)) %>% 
+  mutate(status = mapvalues(status, "Freq. (count)", "count")) %>% 
+  mutate(status = mapvalues(status, "Freq. (cnts)", "cnts")) %>% 
   group_by(n, model, tau, status) %>% 
-  summarise(empSE = round( sqrt( sum((bias_rel)^2) / (sims - 1) ), round),
-            empSE_se = round(
-              empSE / sqrt( 2  * (sims - 1) ), round_se) 
+  summarise(empSE = sqrt( sum((bias_rel)^2) / (sims - 1) ),
+            empSE_se = empSE / sqrt( 2  * (sims - 1) ) 
   ) %>% 
   pivot_wider(names_from = status, values_from = c(empSE, empSE_se))
 
+
+# calculate correlation of betas from continuous and count data
+empSE_count_vs_cnts_cor <- data_short %>%
+  filter(status != "Bayesian") %>%
+  select(c(n, model, tau, status, beta, bias, bias_rel)) %>% 
+  group_by(n, model, tau) %>%
+  summarise(cor = cor(beta[status == "Freq. (count)"], 
+                      beta[status == "Freq. (cnts)"]))
+
+cor <- empSE_count_vs_cnts_cor[,c(4)]
+cor <- as.data.frame(cor)
+empSE_count_vs_cnts <- cbind(empSE_count_vs_cnts, cor)
+rm(empSE_count_vs_cnts_cor, cor)
+
+# calculate the relative % increase in precision, and Monte SE for it. 
+empSE_count_vs_cnts_rel <- empSE_count_vs_cnts %>% 
+  group_by(n, model, tau) %>% 
+  summarise(empSE_rel = 100*(((empSE_count/empSE_cnts)^2 ) - 1),
+            empSE_rel_se = 200*((empSE_count/empSE_cnts)^2) * 
+              sqrt((1-(cor)^2)/999)###### for some reason "sims -1" causes code to break, so I typed in "999" instead. 
+  )
+
+rel <- empSE_count_vs_cnts_rel[,c(4,5)]
+rel <- as.data.frame(rel)
+
+# calculate the p-value for difference in variability of betas from continuous and count data
 empSE_count_vs_cnts_p <- data_short %>% 
-  filter(group != "Bayesian") %>%
+  filter(status != "Bayesian") %>%
   select(c(n, model, tau, status, beta)) %>% 
   group_by(n, model, tau) %>% 
   summarise(p = round(
     var.test(beta[status == "Freq. (count)"], 
-                       beta[status == "Freq. (cnts)"])$p.value, round_p)
+             beta[status == "Freq. (cnts)"])$p.value, round_p)
   ) %>% 
   mutate(p_adj = p.adjust(p, n = 60, method = "bonferroni"))
-
-empSE_count_vs_cnts_cor <- data_short %>% 
-  filter(group != "Bayesian") %>%
-  select(c(n, model, tau, status, beta)) %>% 
-  group_by(n, model, tau) %>%
-  summarise(cor = cor(beta[status == "Freq. (count)"], 
-                       beta[status == "Freq. (cnts)"])) # proves no correlation
-
-empSE_count_vs_cnts <- as.data.frame(empSE_count_vs_cnts)
 
 p <- empSE_count_vs_cnts_p[,c(4,5)]
 p <- as.data.frame(p)
 colnames(p)[1] <- "p"; colnames(p)[2] <- "p_adj"
 
+
+# Merge everything together
+
+empSE_count_vs_cnts <- as.data.frame(empSE_count_vs_cnts)
+empSE_count_vs_cnts <- cbind(empSE_count_vs_cnts, rel)
 empSE_count_vs_cnts_final <- cbind(empSE_count_vs_cnts, p)
 
 empSE_count_vs_cnts_final <- empSE_count_vs_cnts_final %>% 
+  # round estimates
+  mutate(empSE_count = round(empSE_count, round)) %>% 
+  mutate(empSE_cnts = round(empSE_cnts, round)) %>% 
+  mutate(empSE_rel = round(empSE_rel, round-1)) %>% 
+  # round SE of estimates
+  mutate(empSE_se_count = round(empSE_se_count, round_se)) %>% 
+  mutate(empSE_se_cnts = round(empSE_se_cnts, round_se)) %>% 
+  mutate(empSE_rel_se = round(empSE_rel_se, round_se-1)) %>% 
+  # make p-values look better
   mutate(p_v2 = pvalue_rounder_v2(p)) %>% 
-  mutate(p_adj_v2 = pvalue_rounder_v2(p_adj)) 
+  mutate(p_adj_v2 = pvalue_rounder_v2(p_adj)) %>% 
+  select(-c(cor))
 
-rm(empSE_count_vs_cnts, empSE_count_vs_cnts_p, p)
+
+rm(empSE_count_vs_cnts, empSE_count_vs_cnts_p, p, empSE_count_vs_cnts_rel, rel)
 
 write_xlsx(empSE_count_vs_cnts_final, 
            path = paste0("sim study/results/tables/empSE_countvscnts_1000_sims", "_",  Sys.Date(), ".xlsx", sep = ""))
 ```
+
 
 
 
