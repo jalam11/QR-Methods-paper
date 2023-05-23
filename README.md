@@ -25,6 +25,7 @@ ss_Main_no dith.Rmd = The code for the simulation study (only used for Figure S1
 - Output: "table_ss_no dith_v2_2021-08-04_1000_sims.csv"
 
 ** The figures and tables were generated with the following .Rmd files **
+
 res_ss_v3
 - Cleans the results
 - Creates all figures except for figure S1, the figures which used the MIREC data
